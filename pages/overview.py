@@ -14,6 +14,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 from config.settings import COLORS, MACRO_TICKERS
 from config.theme import STREAMLIT_CSS
@@ -38,6 +39,9 @@ _SAMPLE_BONDS = [
 
 
 def render() -> None:
+    # Auto-refresh every 60 seconds to update news
+    st_autorefresh(interval=60_000, key="overview_autorefresh")
+
     st.markdown(STREAMLIT_CSS, unsafe_allow_html=True)
 
     st.markdown(
@@ -245,7 +249,7 @@ def _render_news_section() -> None:
     age_txt = f"{int(age_min)}m ago" if age_min >= 1 else "just now"
     st.caption(
         f"{len(articles)} articles · sorted by most recent · "
-        f"updated {age_txt} (auto-refreshes every 10 min)"
+        f"updated {age_txt} (auto-refreshes every 1 min)"
     )
 
     for art in articles:

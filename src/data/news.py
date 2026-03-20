@@ -57,7 +57,7 @@ def _make_ssl_ctx() -> ssl.SSLContext:
 _SSL_CTX = _make_ssl_ctx()
 
 # ── Cache settings ────────────────────────────────────────────────────────────
-CACHE_TTL_SECONDS = 600  # 10 minutes
+CACHE_TTL_SECONDS = 60  # 1 minute
 
 _cache: dict = {"data": [], "fetched_at": 0.0}
 
