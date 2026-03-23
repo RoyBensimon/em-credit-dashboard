@@ -67,10 +67,10 @@ def render() -> None:
         _render_rv_pairs(rv_pairs)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # Tab 2 — All Trade Ideas
+    # Tab 2 — All Trade Ideas  (Curve + RV from analytics + RV pairs)
     # ══════════════════════════════════════════════════════════════════════════
     with tab_ideas:
-        _render_all_ideas(trade_ideas)
+        _render_all_ideas(trade_ideas, rv_pairs)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -195,19 +195,28 @@ def _render_pair_card(rank: int, p: dict) -> None:
 # Tab 2: All Trade Ideas
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _render_all_ideas(trade_ideas: list[dict]) -> None:
-    if not trade_ideas:
+def _render_all_ideas(trade_ideas: list[dict], rv_pairs: list[dict] | None = None) -> None:
+    # Convert rv_pairs → trade_idea dicts and merge in
+    rv_pair_ideas = _rv_pairs_to_ideas(rv_pairs or [])
+    combined = trade_ideas + rv_pair_ideas
+
+    if not combined:
         st.warning(
             "No trade ideas generated. This may occur if the dataset is too short "
             "for meaningful z-scores. Try reloading data."
         )
         return
 
+    # Re-rank after merge
+    combined = sorted(combined, key=lambda x: x.get("confidence_score", 0), reverse=True)
+    for i, idea in enumerate(combined, 1):
+        idea["rank"] = i
+
     # ── Sidebar filters ────────────────────────────────────────────────────────
     st.sidebar.markdown("### Idea Filters")
 
-    all_types     = sorted({i["trade_type"]          for i in trade_ideas})
-    all_countries = sorted({i.get("country", "")     for i in trade_ideas})
+    all_types     = sorted({i["trade_type"]          for i in combined})
+    all_countries = sorted({i.get("country", "")     for i in combined})
 
     sel_types     = st.sidebar.multiselect("Trade Types",  all_types,     default=all_types)
     sel_countries = st.sidebar.multiselect("Countries",    all_countries, default=all_countries)
@@ -216,7 +225,7 @@ def _render_all_ideas(trade_ideas: list[dict]) -> None:
     )
 
     filtered = [
-        i for i in trade_ideas
+        i for i in combined
         if i["trade_type"]        in sel_types
         and i.get("country", "") in sel_countries
         and i["confidence_score"] >= min_conf
@@ -224,10 +233,10 @@ def _render_all_ideas(trade_ideas: list[dict]) -> None:
 
     # ── KPI row ────────────────────────────────────────────────────────────────
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total Ideas",   len(filtered))
-    c2.metric("RV Ideas",      sum(1 for i in filtered if "Relative Value" in i["trade_type"]))
-    c3.metric("Curve Ideas",   sum(1 for i in filtered if "Curve"          in i["trade_type"]))
-    c4.metric("High Conf ≥70%",sum(1 for i in filtered if i["confidence_score"] >= 0.70))
+    c1.metric("Total Ideas",    len(filtered))
+    c2.metric("RV Ideas",       sum(1 for i in filtered if "Relative Value" in i["trade_type"]))
+    c3.metric("Curve Ideas",    sum(1 for i in filtered if "Curve"          in i["trade_type"]))
+    c4.metric("High Conf ≥70%", sum(1 for i in filtered if i["confidence_score"] >= 0.70))
 
     st.divider()
 
@@ -240,6 +249,41 @@ def _render_all_ideas(trade_ideas: list[dict]) -> None:
         _render_table_view(filtered)
     else:
         _render_card_view(filtered)
+
+
+def _rv_pairs_to_ideas(pairs: list[dict]) -> list[dict]:
+    """Convert rv_pairs screener output to the trade_ideas dict format."""
+    ideas = []
+    for p in pairs:
+        z    = p.get("zscore", 0)
+        corr = p.get("correlation", 0)
+        # Confidence: combination of |z| and correlation
+        conf = min(1.0, (abs(z) / 3.0) * 0.6 + corr * 0.4)
+        ideas.append({
+            "rank":             0,  # will be reassigned
+            "title":            p.get("trade", f"{p.get('id_a')} / {p.get('id_b')}"),
+            "trade_type":       "Relative Value",
+            "direction":        "Long" if z > 0 else "Short",
+            "country":          f"{p.get('country_a', '')} / {p.get('country_b', '')}",
+            "rationale":        p.get("why", ""),
+            "confidence_score": round(conf, 3),
+            "supporting_metrics": {
+                "Correlation":    f"{corr:.2f}",
+                "Z-Score":        f"{z:+.2f}σ",
+                "Spread Diff":    f"{p.get('current_diff_bps', 0):+.0f} bps",
+                "Hist Avg":       f"{p.get('hist_avg_diff_bps', 0):+.0f} bps",
+                "Hedge Ratio":    f"{p.get('hedge_ratio', 1.0):.2f}x",
+            },
+            "hedge_suggestion": (
+                f"{p.get('trade', 'See pair')} — Hedge ratio {p.get('hedge_ratio', 1.0):.2f}x"
+            ),
+            "catalyst_notes":   "Signal based on spread differential z-score vs 126-day history.",
+            "key_risks":        [
+                "Spread differential may reflect structural differences rather than dislocation.",
+                "Correlation may not hold in stressed markets.",
+            ],
+        })
+    return ideas
 
 
 # ═════════════════════════════════════════════════════════════════════════════

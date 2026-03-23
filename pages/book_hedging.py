@@ -734,11 +734,22 @@ def _render_news_section(positions: list[dict]) -> None:
     for p in positions:
         hits      = matched[p["id"]]
         dir_color = COLORS["positive"] if p["direction"] == "Long" else COLORS["negative"]
+        alert_icon = " ·  news detected" if hits else ""
 
         with st.expander(
-            f"{p['direction']} {p['country']} {p['maturity']}Y — {len(hits)} article(s)",
+            f"{p['direction']} {p['country']} {p['maturity']}Y"
+            f" — {len(hits)} article(s){alert_icon}",
             expanded=bool(hits),
         ):
+            # Colored position badge inside the expander
+            st.markdown(
+                f"<span style='background:{dir_color};color:#fff;font-weight:700;"
+                f"font-size:12px;padding:3px 12px;border-radius:12px;'>"
+                f"{p['direction'].upper()}  {p['country']} {p['maturity']}Y</span>",
+                unsafe_allow_html=True,
+            )
+            st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+
             if not hits:
                 st.caption(f"No relevant news found for {p['country']}.")
                 continue
@@ -790,8 +801,25 @@ def _render_news_section(positions: list[dict]) -> None:
 # Page entry point
 # ══════════════════════════════════════════════════════════════════════════════
 
+_BOOK_EXTRA_CSS = """
+<style>
+/* Fix expander hover: prevent white background from hiding dark text */
+[data-testid="stExpander"] summary:hover,
+[data-testid="stExpander"] > details > summary:hover {
+    background-color: rgba(255, 255, 255, 0.06) !important;
+    color: inherit !important;
+}
+[data-testid="stExpander"] summary:hover p,
+[data-testid="stExpander"] summary:hover span {
+    color: inherit !important;
+}
+</style>
+"""
+
+
 def render() -> None:
     st.markdown(STREAMLIT_CSS, unsafe_allow_html=True)
+    st.markdown(_BOOK_EXTRA_CSS, unsafe_allow_html=True)
     _init_state()
 
     st.title("Book Hedging")

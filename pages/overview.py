@@ -54,7 +54,7 @@ def render() -> None:
         f"""
 <div style="background:{COLORS['surface']};border-radius:10px;padding:20px 24px;
             border-left:4px solid {COLORS['primary']};margin:16px 0 8px 0;">
-  <div style="font-size:13px;color:{COLORS['text']};line-height:1.7;">
+  <div style="font-size:15px;color:{COLORS['text']};line-height:1.7;">
     I built this dashboard by trying to put myself in a trader's shoes.<br>
     The idea was simple: <b>What mental load can I remove during a trading day, and how can I make
     sure we don't miss anything?</b>
@@ -164,8 +164,8 @@ def _render_trade_ideas(trade_ideas: list[dict]) -> None:
         st.info("No trade ideas generated. Check the Trade Ideas page.")
         return
 
-    # Show 5 diverse ideas: mix trade types rather than just top-ranked
-    diverse = _pick_diverse(trade_ideas, n=5)
+    # Show 3 diverse ideas: mix trade types and countries
+    diverse = _pick_diverse(trade_ideas, n=3)
     for idea in diverse:
         _render_idea_card(idea)
 
@@ -177,46 +177,70 @@ def _render_trade_ideas(trade_ideas: list[dict]) -> None:
         st.rerun()
 
 
-def _pick_diverse(ideas: list[dict], n: int = 5) -> list[dict]:
+def _pick_diverse(ideas: list[dict], n: int = 3) -> list[dict]:
     """
-    Return up to n ideas with an explicit mix:
-      - 2-3 Relative Value trades (best by |confidence|)
-      - 2-3 Curve Trades (best by |confidence|)
-    If a bucket is short, fill remaining slots from the other.
+    Return up to n ideas with diversity across both trade type AND country.
+
+    Strategy:
+      1. Split into RV and Curve buckets, each sorted by confidence desc.
+      2. Pick alternating RV / Curve.
+      3. After assembling candidates, swap duplicated-country ideas for
+         different-country alternatives so the final list spans ≥2 regions
+         when possible.
     """
-    rv_ideas    = [i for i in ideas if i.get("trade_type") == "Relative Value"]
-    curve_ideas = [i for i in ideas if i.get("trade_type") == "Curve Trade"]
+    rv_ideas    = sorted(
+        [i for i in ideas if i.get("trade_type") == "Relative Value"],
+        key=lambda x: x.get("confidence_score", 0), reverse=True,
+    )
+    curve_ideas = sorted(
+        [i for i in ideas if i.get("trade_type") == "Curve Trade"],
+        key=lambda x: x.get("confidence_score", 0), reverse=True,
+    )
 
-    # Sort each bucket by confidence score descending
-    rv_ideas    = sorted(rv_ideas,    key=lambda x: x.get("confidence_score", 0), reverse=True)
-    curve_ideas = sorted(curve_ideas, key=lambda x: x.get("confidence_score", 0), reverse=True)
-
-    # Target: half RV, half curve (rounded)
     target_curve = n // 2
     target_rv    = n - target_curve
 
     selected_rv    = rv_ideas[:target_rv]
     selected_curve = curve_ideas[:target_curve]
 
-    # Fill gaps if one bucket is smaller than target
     shortfall_rv    = target_rv    - len(selected_rv)
     shortfall_curve = target_curve - len(selected_curve)
-
     if shortfall_rv > 0:
         selected_curve += curve_ideas[target_curve : target_curve + shortfall_rv]
     if shortfall_curve > 0:
-        selected_rv += rv_ideas[target_rv : target_rv + shortfall_curve]
+        selected_rv    += rv_ideas[target_rv : target_rv + shortfall_curve]
 
-    # Interleave: RV, Curve, RV, Curve, … for visual variety
+    # Interleave RV / Curve for visual variety
     result: list[dict] = []
     for rv, cu in zip(selected_rv, selected_curve):
         result.append(rv)
         result.append(cu)
-    # Append any remainder (when counts are unequal)
     for idea in selected_rv[len(selected_curve):] + selected_curve[len(selected_rv):]:
         result.append(idea)
+    result = result[:n]
 
-    return result[:n]
+    # ── Country diversification pass ─────────────────────────────────────────
+    # If two ideas share the same country, swap the lower-ranked one for a
+    # different-country candidate from the remaining pool.
+    used_countries: set[str] = set()
+    final: list[dict] = []
+    for idea in result:
+        final.append(idea)
+        used_countries.add(idea.get("country", ""))
+
+    remaining = [i for i in ideas if i not in final]
+    for idx, idea in enumerate(final):
+        country = idea.get("country", "")
+        if list(i.get("country", "") for i in final).count(country) > 1:
+            # Try to find a replacement from a different country
+            for alt in remaining:
+                if alt.get("country", "") not in used_countries:
+                    final[idx] = alt
+                    remaining.remove(alt)
+                    used_countries.add(alt.get("country", ""))
+                    break
+
+    return final
 
 
 def _render_news_section() -> None:

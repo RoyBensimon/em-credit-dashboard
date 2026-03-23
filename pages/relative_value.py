@@ -221,15 +221,36 @@ def render() -> None:
 
             st.divider()
 
-            st.dataframe(
-                pairs_df.style.background_gradient(
-                    subset=["Spread Z"], cmap="RdYlGn", vmin=-4, vmax=4
-                ).background_gradient(
-                    subset=["Correlation"], cmap="Blues", vmin=0, vmax=1
-                ),
-                use_container_width=True,
-                height=400,
+            def _color_zscore(val):
+                try:
+                    v = float(val)
+                    if v >= 2:
+                        return "background-color:#1a4731;color:#4ade80"
+                    elif v <= -2:
+                        return "background-color:#4a1a1a;color:#f87171"
+                    elif v >= 1:
+                        return "background-color:#1a3320;color:#86efac"
+                    elif v <= -1:
+                        return "background-color:#3a1a1a;color:#fca5a5"
+                    return ""
+                except (TypeError, ValueError):
+                    return ""
+
+            def _color_corr(val):
+                try:
+                    v = float(val)
+                    if v >= 0.8:
+                        return "background-color:#1a2f4a;color:#93c5fd"
+                    elif v >= 0.6:
+                        return "background-color:#1a2540;color:#bfdbfe"
+                    return ""
+                except (TypeError, ValueError):
+                    return ""
+
+            styled = pairs_df.style.map(_color_zscore, subset=["Spread Z"]).map(
+                _color_corr, subset=["Correlation"]
             )
+            st.dataframe(styled, use_container_width=True, height=400)
 
             csv_pairs = pairs_df.to_csv(index=False).encode("utf-8")
             st.download_button(

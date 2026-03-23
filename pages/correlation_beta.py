@@ -202,8 +202,24 @@ def _confidence_html(label: str) -> str:
 
 # ── Main render ───────────────────────────────────────────────────────────────
 
+_CORR_EXTRA_CSS = """
+<style>
+/* Larger, more visible input labels on the Correlation page */
+.stTextInput label, .stSelectbox label, .stNumberInput label,
+.stSlider label, .stRadio label, .stMultiSelect label {
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    color: #CBD5E1 !important;
+}
+/* Slightly larger body text */
+.stMarkdown p, .stCaption { font-size: 13px !important; }
+</style>
+"""
+
+
 def render() -> None:
     st.markdown(STREAMLIT_CSS, unsafe_allow_html=True)
+    st.markdown(_CORR_EXTRA_CSS, unsafe_allow_html=True)
     st.title("Correlation & Hedge Finder")
 
     data          = get_app_data()
@@ -417,7 +433,7 @@ def _render_hedge_result(
     st.markdown(
         f'<h4 style="color:{COLORS["text"]};margin:8px 0 4px 0">'
         f'{pos_sign} <span style="color:{COLORS["primary"]}">${notional_m:.0f}M</span>'
-        f' {bond_id}  &rarr;  {lookback}  ·  {universe} universe</h4>',
+        f' {bond_id}  &rarr;  {lookback}  ·  {universe}</h4>',
         unsafe_allow_html=True,
     )
     st.caption(f"{n_obs} observations · {len(rows)} hedge candidates scored")
@@ -569,7 +585,7 @@ def _render_hedge_result(
         bm_matrix = corr_full.loc[daily_in_w, avail_factors]
         fig_bm = plot_bond_macro_matrix(
             bm_matrix,
-            title=f"Bond × Macro Correlations  ({lookback}, {n_obs} obs)",
+            title="",
             height=max(400, len(daily_in_w) * 24),
         )
         st.plotly_chart(fig_bm, use_container_width=True)

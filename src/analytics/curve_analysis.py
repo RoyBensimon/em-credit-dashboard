@@ -173,6 +173,207 @@ def curve_percentiles(
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# Inflation context layer
+# ═════════════════════════════════════════════════════════════════════════════
+
+def compute_inflation_context(
+    metric_name: str,
+    metric_zscore: float,
+    macro_returns: pd.DataFrame,
+    window: int = 21,
+) -> dict:
+    """
+    Assign an inflation context label for a curve signal.
+
+    Uses macro proxies available in the dashboard (GLD, PDBC, TLT) to derive
+    an inflation momentum score.  In production with live data access, real
+    FRED breakeven series (T5YIE = US 5Y breakeven, T10YIE = US 10Y breakeven,
+    T5YIFR = 5Y5Y forward) would replace this composite proxy.
+
+    Proxy construction
+    ------------------
+    inflation_proxy_return(t) =
+        +0.35 × GLD_return(t)     # gold rallies on inflation fears
+        +0.35 × PDBC_return(t)    # commodities signal real inflation pressure
+        -0.30 × TLT_return(t)     # TLT falls when nominal rates / inflation rise
+
+    Inflation momentum is then the z-score of the 21-day cumulative proxy
+    return versus its rolling distribution over the lookback history.
+
+    Signal matching
+    ---------------
+    Steepener (z > 0):  supported by rising inflation (long end sells off)
+    Flattener (z < 0):  supported by falling inflation (disinflation / hike cycle end)
+    Butterfly belly cheap (z > 0): supported by volatile inflation (belly underperforms)
+    Butterfly belly rich  (z < 0): supported by stable inflation (belly outperforms)
+
+    Returns
+    -------
+    dict with keys: label, color, interpretation, infl_proxy_z, infl_trend
+    """
+    # ── Build composite inflation proxy ──────────────────────────────────────
+    _WEIGHTS = {"GLD": +0.35, "PDBC": +0.35, "TLT": -0.30}
+    components = []
+    used_tickers: list[str] = []
+
+    for ticker, weight in _WEIGHTS.items():
+        if ticker in macro_returns.columns:
+            components.append(macro_returns[ticker].dropna() * weight)
+            used_tickers.append(ticker)
+
+    if not components:
+        return {
+            "label":           "Inflation-neutral",
+            "color":           "text_muted",
+            "interpretation":  "No inflation proxy data available (GLD/PDBC/TLT missing).",
+            "infl_proxy_z":    np.nan,
+            "infl_trend":      "neutral",
+        }
+
+    infl_proxy = (
+        pd.concat(components, axis=1)
+        .sum(axis=1, min_count=1)
+        .dropna()
+    )
+
+    if len(infl_proxy) < window * 3:
+        return {
+            "label":           "Inflation-neutral",
+            "color":           "text_muted",
+            "interpretation":  "Insufficient history to assess inflation context.",
+            "infl_proxy_z":    np.nan,
+            "infl_trend":      "neutral",
+        }
+
+    # ── Compute inflation momentum z-score ───────────────────────────────────
+    # Rolling window sums (step = 5 business days to get more data points)
+    recent_sum = float(infl_proxy.tail(window).sum())
+    roll_sums = [
+        float(infl_proxy.iloc[i : i + window].sum())
+        for i in range(0, len(infl_proxy) - window, 5)
+    ]
+
+    if len(roll_sums) < 8:
+        return {
+            "label":           "Inflation-neutral",
+            "color":           "text_muted",
+            "interpretation":  "Not enough observations for inflation momentum z-score.",
+            "infl_proxy_z":    np.nan,
+            "infl_trend":      "neutral",
+        }
+
+    infl_mean = float(np.mean(roll_sums))
+    infl_std  = float(np.std(roll_sums))
+    infl_z    = (recent_sum - infl_mean) / infl_std if infl_std > 0 else 0.0
+
+    # ── Classify inflation trend ──────────────────────────────────────────────
+    if infl_z > 0.8:
+        infl_trend = "rising"
+    elif infl_z < -0.8:
+        infl_trend = "falling"
+    else:
+        infl_trend = "neutral"
+
+    # ── Match signal with inflation trend ─────────────────────────────────────
+    is_butterfly = "butterfly" in metric_name.lower()
+    is_steepener = (not is_butterfly) and metric_zscore > 0
+    # is_flattener = (not is_butterfly) and metric_zscore < 0  [implicit]
+
+    if is_butterfly:
+        belly_cheap = metric_zscore > 0
+        if belly_cheap and abs(infl_z) > 0.8:
+            label  = "Inflation-supportive"
+            color  = "positive"
+            interp = (
+                f"Inflation proxies show a significant move (z={infl_z:+.1f}). "
+                "Volatile inflation environments tend to generate belly underperformance, "
+                "which is consistent with this signal."
+            )
+        elif (not belly_cheap) and abs(infl_z) <= 0.5:
+            label  = "Inflation-supportive"
+            color  = "positive"
+            interp = (
+                f"Inflation proxies are broadly stable (z={infl_z:+.1f}). "
+                "A stable inflation environment is consistent with belly richness relative to wings."
+            )
+        elif abs(infl_z) <= 0.4:
+            label  = "Inflation-neutral"
+            color  = "text_muted"
+            interp = (
+                f"Inflation proxies are flat (z={infl_z:+.1f}). "
+                "No strong inflation read for this butterfly — other drivers likely dominate."
+            )
+        else:
+            label  = "Inflation-not-confirmed"
+            color  = "negative"
+            interp = (
+                f"Inflation dynamics (z={infl_z:+.1f}) do not clearly support this butterfly signal. "
+                "Consider whether credit or supply factors are the primary driver."
+            )
+
+    elif is_steepener:
+        if infl_trend == "rising":
+            label  = "Inflation-supportive"
+            color  = "positive"
+            interp = (
+                f"Steepening is consistent with rising inflation expectations "
+                f"(composite proxy z={infl_z:+.1f}). "
+                "The long end is likely pricing in higher inflation risk."
+            )
+        elif infl_trend == "neutral":
+            label  = "Inflation-neutral"
+            color  = "text_muted"
+            interp = (
+                f"Inflation proxies are broadly flat (z={infl_z:+.1f}). "
+                "This steepening may be driven by credit, supply, or country-specific factors "
+                "rather than inflation repricing."
+            )
+        else:
+            label  = "Inflation-not-confirmed"
+            color  = "negative"
+            interp = (
+                f"Inflation proxies are trending lower (z={infl_z:+.1f}), "
+                "which does not support curve steepening. "
+                "The signal may reflect country-specific or technical factors."
+            )
+
+    else:  # flattener
+        if infl_trend == "falling":
+            label  = "Inflation-supportive"
+            color  = "positive"
+            interp = (
+                f"Flattening is consistent with easing inflation expectations "
+                f"(composite proxy z={infl_z:+.1f}). "
+                "The long end rallying on disinflation is a classic flattener driver."
+            )
+        elif infl_trend == "neutral":
+            label  = "Inflation-neutral"
+            color  = "text_muted"
+            interp = (
+                f"Inflation proxies are broadly stable (z={infl_z:+.1f}). "
+                "This flattening may reflect rate hike expectations or credit dynamics "
+                "rather than a disinflation trade."
+            )
+        else:
+            label  = "Inflation-not-confirmed"
+            color  = "negative"
+            interp = (
+                f"Inflation proxies are rising (z={infl_z:+.1f}), "
+                "which does not support curve flattening. "
+                "Inflation markets do not confirm this signal."
+            )
+
+    return {
+        "label":          label,
+        "color":          color,
+        "interpretation": interp,
+        "infl_proxy_z":   round(infl_z, 2),
+        "infl_trend":     infl_trend,
+        "proxy_tickers":  used_tickers,
+    }
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # 4. DV01-neutral trade sizing
 # ═════════════════════════════════════════════════════════════════════════════
 
