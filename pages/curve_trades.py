@@ -326,11 +326,20 @@ Trader judgment remains essential before executing any trade.</b>
             "P&L-neutral to a parallel shift in spreads."
         )
 
-        c_type = st.radio("Trade Type", ["2-Leg (Slope)", "3-Leg (Butterfly)"], horizontal=True)
-        country_meta = meta[meta["country"] == sel_country].sort_values("maturity")
+        col_country, col_type = st.columns([1, 2])
+        with col_country:
+            dv01_country = st.selectbox(
+                "Country", all_countries,
+                index=all_countries.index(sel_country) if sel_country in all_countries else 0,
+                key="dv01_country",
+            )
+        with col_type:
+            c_type = st.radio("Trade Type", ["2-Leg (Slope)", "3-Leg (Butterfly)"], horizontal=True)
+
+        country_meta = meta[meta["country"] == dv01_country].sort_values("maturity")
 
         if country_meta.empty:
-            st.warning(f"No bonds found for {sel_country}.")
+            st.warning(f"No bonds found for {dv01_country}.")
         else:
             bond_options = {
                 f"{row['maturity']}Y — {row['id']} (DV01=${row['dv01']:,})": row
